@@ -5,6 +5,7 @@ import logging
 import requests
 import datetime
 from typing import Optional, Dict, Any, Union
+from concurrent.futures import ThreadPoolExecutor
 from .agent_service import AgentService
 from .knowledge_base_service import KnowledgeBaseService
 
