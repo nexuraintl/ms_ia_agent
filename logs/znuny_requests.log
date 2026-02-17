@@ -29578,3 +29578,21 @@
 >>>>>>> feature-copia
 }
 
+{
+  "time": "2026-02-17T19:29:14.728795Z",
+  "method": "POST",
+  "headers": {
+    "Host": "localhost:8080",
+    "User-Agent": "curl/8.5.0",
+    "Accept": "*/*",
+    "Content-Type": "application/json",
+    "Content-Length": "17"
+  },
+  "args": {},
+  "json": {
+    "TicketID": 508
+  },
+  "form": {},
+  "raw_body": "{\"TicketID\": 508}"
+}
+

@@ -491,12 +491,16 @@ class ZnunyService:
             session_id = self.get_or_create_session_id()
             logger.info("SessionID obtained for operation.")
 
-        # 2. Extract parameters
-        title = data.get("titulo") or f"Ticket Update {ticket_id}"
+        # 2. Get ticket metadata to preserve original title
+        metadata = self.get_ticket_metadata(ticket_id, session_id)
+        original_title = metadata.get("title") if metadata else f"Ticket Update {ticket_id}"
+        
+        # 3. Extract parameters
+        title = data.get("titulo") or original_title  # Use original title if not specified
         user = data.get("usuario") or ""
-        queue_id = data.get("queue_id") or 1
+        queue_id = data.get("queue_id") or 9  # QueueID 9 = Mesa de Servicios
         priority_id = data.get("priority_id") or 3
-        state_id = data.get("state_id") or 4
+        state_id = data.get("state_id") or 1  # StateID 1 = Nuevo
         subject = data.get("subject") or "Automatic Diagnosis (AI)"
 
         # 3. Get ticket content
