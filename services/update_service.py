@@ -233,6 +233,9 @@ class ZnunyService:
                      type_id: Optional[int] = None) -> Dict[str, Any]:
         """Updates a ticket in Znuny adding a new article and metadata."""
         
+        # Get sender name from environment or use default
+        sender_name = os.environ.get("ZNUNY_SENDER_NAME", "Agente IA")
+
         url = f"{self.base_url}/Ticket/{ticket_id}"
         payload = {
             "SessionID": session_id,
@@ -246,6 +249,7 @@ class ZnunyService:
                 "StateID": state_id
             },
             "Article": {
+                "From": sender_name,
                 "Subject": subject,
                 "Body": body,
                 "ContentType": "text/plain; charset=utf8"
@@ -330,16 +334,6 @@ class ZnunyService:
             "processed_at": datetime.datetime.utcnow().isoformat() + "Z"
         }
 
-    def _save_incident_to_file(self, ticket_id: int, incident_data: dict) -> str:
-        """Saves incident data to JSON file. Returns the file path."""
-        incidents_dir = os.path.join(os.path.dirname(__file__), "..", "logs", "incidents")
-        os.makedirs(incidents_dir, exist_ok=True)
-        
-        json_path = os.path.join(incidents_dir, f"ticket_{ticket_id}.json")
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(incident_data, f, ensure_ascii=False, indent=2)
-        
-        return json_path
 
     def _process_incident(self, ticket_id: int, session_id: str, 
                           ticket_text: str, diagnosis_body: str, 
@@ -363,15 +357,12 @@ class ZnunyService:
             # Extract client using AI
             client_info = self.agent_service.extract_client_info(metadata, ticket_text)
             
-            # Build and save incident data
+            # Build incident data for monitor
             incident_data = self._build_incident_data(
                 ticket_id, metadata, diagnosis_body, type_id, client_info, ticket_text
             )
             
-            json_path = self._save_incident_to_file(ticket_id, incident_data)
-            
-            logger.info(f"✅ Incident data saved to: {json_path}")
-            logger.info(f"📍 Cliente real detectado: {client_info.get('entidad', 'No identificado')}")
+            logger.info(f"📍 Real client detected: {client_info.get('entidad', 'Not identified')}")
             
             # Notify external log monitor service and WAIT for result
             return self._notify_log_monitor(incident_data)
