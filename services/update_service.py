@@ -252,7 +252,10 @@ class ZnunyService:
                 "From": sender_name,
                 "Subject": subject,
                 "Body": body,
-                "ContentType": "text/plain; charset=utf8"
+                "ContentType": "text/plain; charset=utf8",
+                "SenderType": "system",
+                "IsVisibleForCustomer": 0,
+                "CommunicationChannel": "Internal"
             }
         }
 
@@ -273,7 +276,9 @@ class ZnunyService:
                 timeout=10
             )
             r.raise_for_status()
-            return r.json()
+            data = r.json()
+            logger.info(f"✅ Znuny update response: {json.dumps(data, indent=2)}")
+            return data
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to update Znuny ticket {ticket_id}: {e}")
             return {"error": str(e)}
