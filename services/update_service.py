@@ -320,13 +320,14 @@ class ZnunyService:
                                client_info: dict, ticket_text: str) -> dict:
         """Builds the incident data structure."""
         return {
-            "ticket_id": ticket_id,
+            "ticket_id": str(ticket_id),  # Log monitor expects a string
             "ticket_number": metadata.get("ticket_number"),
             "title": metadata.get("title"),
             "type_id": type_id,
             "type_name": "Incidente",
             "diagnostico": diagnosis_body,
             "ticket_text": ticket_text,
+            "entity": client_info.get("entidad", "No identificado"), # Required by log monitor
             "cliente_znuny": {
                 "customer_id": metadata.get("customer_id"),
                 "customer_user": metadata.get("customer_user")
@@ -402,8 +403,9 @@ class ZnunyService:
                 if summary:
                     logger.info("✅ Technical analysis received from error_log.")
                     return summary
+            else:
+                logger.error(f"❌ Log monitor error {response.status_code}: {response.text}")
             
-            logger.info(f"📤 Incident sent to log monitor: {response.status_code}")
             return None
         except requests.exceptions.Timeout:
             logger.warning("⚠️ Log monitor request timed out - continuing without logs")
@@ -490,6 +492,18 @@ class ZnunyService:
         # 2. Get ticket metadata to preserve original title
         metadata = self.get_ticket_metadata(ticket_id, session_id)
         original_title = metadata.get("title") if metadata else f"Ticket Update {ticket_id}"
+        
+        # 2.1 STATE FILTER: Only process tickets in "Nuevo" state
+        current_state = metadata.get("state", "Unknown") if metadata else "Unknown"
+        if current_state != "Nuevo":
+            logger.info(f"⏭️ Ticket {ticket_id} SKIPPED - State is '{current_state}', only 'Nuevo' tickets are processed.")
+            return {
+                "ok": False,
+                "skipped": True,
+                "ticket_id": ticket_id,
+                "current_state": current_state,
+                "reason": f"Ticket state is '{current_state}', only 'Nuevo' tickets are processed"
+            }
         
         # 3. Extract parameters
         title = data.get("titulo") or original_title  # Use original title if not specified
