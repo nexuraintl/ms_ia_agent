@@ -5,7 +5,6 @@ import logging
 import requests
 import datetime
 from typing import Optional, Dict, Any, Union
-from concurrent.futures import ThreadPoolExecutor
 from .agent_service import AgentService
 from .knowledge_base_service import KnowledgeBaseService
 
@@ -43,8 +42,7 @@ class ZnunyService:
         self._agent_service: Optional[AgentService] = None
         self._kb_service: Optional[KnowledgeBaseService] = None
         
-        # ThreadPoolExecutor for async incident processing
-        self._executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="incident_")
+
 
     @property
     def kb_service(self) -> KnowledgeBaseService:
@@ -147,31 +145,34 @@ class ZnunyService:
             logger.error(f"Unexpected error getting ticket metadata: {e}")
             return None
 
-    def get_ticket_latest_article(self, ticket_id: int, session_id: str) -> Optional[str]:
+    def _fetch_all_articles(self, ticket_id: int, session_id: str) -> list:
         """
-        Retrieves the text of the most relevant article from a Znuny ticket.
+        Fetches all articles for a ticket in a single API call.
+        Returns the raw list of article dicts.
         """
         headers = {"Accept": "application/json"}
         url_ticket = f"{self.base_url}/Ticket/{ticket_id}?SessionID={session_id}&AllArticles=1"
 
         try:
             r = requests.get(url_ticket, headers=headers, timeout=10)
-            r.raise_for_status() 
+            r.raise_for_status()
             data = r.json()
-            
+
             ticket_data = data.get("Ticket")
             if isinstance(ticket_data, list):
                 ticket_data = ticket_data[0]
-                
-            articles = ticket_data.get("Article") if ticket_data else None
-            return self._extract_relevant_text(articles)
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to get article for ticket {ticket_id}: {e}")
-            return None
+            return ticket_data.get("Article", []) if ticket_data else []
         except Exception as e:
-            logger.error(f"Unexpected error processing Znuny articles: {e}")
-            return None
+            logger.error(f"Failed to fetch articles for ticket {ticket_id}: {e}")
+            return []
+
+    def get_ticket_latest_article(self, ticket_id: int, session_id: str) -> Optional[str]:
+        """
+        Retrieves the text of the most relevant article from a Znuny ticket.
+        """
+        articles = self._fetch_all_articles(ticket_id, session_id)
+        return self._extract_relevant_text(articles)
 
     def _extract_relevant_text(self, articles: list) -> Optional[str]:
         """Helper to extract text from a list of articles."""
@@ -244,7 +245,7 @@ class ZnunyService:
                 "Title": title,
                 "CustomerUser": user,
                 "QueueID": queue_id,
-                # "TypeID": type_id,  # Comentado: No modificar el tipo de ticket
+
                 "PriorityID": priority_id,
                 "StateID": state_id
             },
@@ -262,9 +263,7 @@ class ZnunyService:
         if dynamic_fields:
             payload["Ticket"]["DynamicFields"] = dynamic_fields
             
-        # Comentado: No modificar el tipo de ticket
-        # if type_id is not None:
-        #     payload["Ticket"]["TypeID"] = type_id
+
         
         logger.debug(f"Sending update payload to Znuny: {json.dumps(payload, indent=2, ensure_ascii=False)}")
 
@@ -320,13 +319,14 @@ class ZnunyService:
                                client_info: dict, ticket_text: str) -> dict:
         """Builds the incident data structure."""
         return {
-            "ticket_id": ticket_id,
+            "ticket_id": str(ticket_id),  # Log monitor expects a string
             "ticket_number": metadata.get("ticket_number"),
             "title": metadata.get("title"),
             "type_id": type_id,
             "type_name": "Incidente",
             "diagnostico": diagnosis_body,
             "ticket_text": ticket_text,
+            "entity": client_info.get("entidad", "No identificado"), # Required by log monitor
             "cliente_znuny": {
                 "customer_id": metadata.get("customer_id"),
                 "customer_user": metadata.get("customer_user")
@@ -402,8 +402,9 @@ class ZnunyService:
                 if summary:
                     logger.info("✅ Technical analysis received from error_log.")
                     return summary
+            else:
+                logger.error(f"❌ Log monitor error {response.status_code}: {response.text}")
             
-            logger.info(f"📤 Incident sent to log monitor: {response.status_code}")
             return None
         except requests.exceptions.Timeout:
             logger.warning("⚠️ Log monitor request timed out - continuing without logs")
@@ -491,26 +492,48 @@ class ZnunyService:
         metadata = self.get_ticket_metadata(ticket_id, session_id)
         original_title = metadata.get("title") if metadata else f"Ticket Update {ticket_id}"
         
+        # 2.1 STATE FILTER: Only process tickets in "Nuevo" state
+        current_state = metadata.get("state", "Unknown") if metadata else "Unknown"
+        if current_state != "Nuevo":
+            logger.info(f"⏭️ Ticket {ticket_id} SKIPPED - State is '{current_state}', only 'Nuevo' tickets are processed.")
+            return {
+                "ok": False,
+                "skipped": True,
+                "ticket_id": ticket_id,
+                "current_state": current_state,
+                "reason": f"Ticket state is '{current_state}', only 'Nuevo' tickets are processed"
+            }
+        
+        # 2.2 ARTICLE COUNT FILTER: Only process tickets with 2 or fewer articles
+        articles = self._fetch_all_articles(ticket_id, session_id)
+        article_count = len(articles)
+        if article_count > 2:
+            logger.info(f"⏭️ Ticket {ticket_id} SKIPPED - Has {article_count} articles, likely a follow-up.")
+            return {
+                "ok": False,
+                "skipped": True,
+                "ticket_id": ticket_id,
+                "article_count": article_count,
+                "reason": f"Ticket has {article_count} articles (more than 2), skipping follow-up"
+            }
+        
         # 3. Extract parameters
-        title = data.get("titulo") or original_title  # Use original title if not specified
+        title = data.get("titulo") or original_title
         user = data.get("usuario") or ""
-        queue_id = data.get("queue_id") or 9  # QueueID 9 = Mesa de Servicios
+        queue_id = data.get("queue_id") or 9
         priority_id = data.get("priority_id") or 3
-        state_id = data.get("state_id") or 1  # StateID 1 = Nuevo
+        state_id = data.get("state_id") or 1
         subject = data.get("subject") or "Automatic Diagnosis (AI)"
 
-        # 3. Get ticket content
-        logger.info(f"Fetching latest article for ticket {ticket_id}...")
-        ticket_text = self.get_ticket_latest_article(ticket_id, session_id)
+        # 4. Get ticket content (reusing already fetched articles)
+        ticket_text = self._extract_relevant_text(articles)
         if not ticket_text:
             raise ValueError("No ticket text found (latest article).")
-            
-        logger.info(f"DEBUG: Texto que va a la IA:\n{'='*20}\n{ticket_text}\n{'='*20}")
 
-        # 4. Get RAG configuration
+        # 5. Get RAG configuration
         tool_config = self._get_rag_tool_config()
 
-        # 5. Generate AI diagnosis
+        # 6. Generate AI diagnosis
         logger.info("Generating diagnosis from ticket...")
         diagnosis_result = self._generate_diagnosis(ticket_text, tool_config)
         
@@ -545,7 +568,7 @@ class ZnunyService:
         
         logger.info(f"Diagnosis generated. TypeID: {type_id_from_ia}, Criticality: {criticality}")
 
-        # 6. Route to multimodal service if visual analysis needed
+        # 7. Route to multimodal service if visual analysis needed
         if requires_visual:
             logger.info("🎨 Ticket requires visual analysis - calling multimodal service...")
             visual_result = self._call_multimodal_service(ticket_id, ticket_text)
@@ -562,8 +585,7 @@ class ZnunyService:
         if emergency_header:
             diagnosis_body = f"{emergency_header}─── Diagnóstico de IA ───\n{diagnosis_body}"
         
-        # 7. Process incident (conditional - only if type_id == 10)
-        # We wait for log analysis if it's an incident
+        # 8. Process incident (conditional - only if type_id == 10)
         log_summary = self._process_incident(
             ticket_id, session_id, ticket_text, diagnosis_body, type_id_from_ia
         )
@@ -571,7 +593,7 @@ class ZnunyService:
         if log_summary:
             diagnosis_body = f"{diagnosis_body}\n\n─ ANALISIS TÉCNICO DE LOGS ─\n{log_summary}"
 
-        # 7. Update Znuny ticket
+        # 9. Update Znuny ticket
         logger.info(f"Sending update to ticket {ticket_id}...")
         
         # Add service identifier for traceability
@@ -587,13 +609,13 @@ class ZnunyService:
             state_id=state_id,
             subject=subject,
             body=body_with_identifier,
-            type_id=None  # Comentado en el método: No modificar el tipo de ticket
+            type_id=None
         )
         
         if isinstance(resp, dict) and 'error' in resp:
             raise RuntimeError(f"Failed to update Znuny: {resp['error']}")
 
-        # 10. Build response
+        # 10. Return response
         result = {
             "ok": True,
             "ticket_id": ticket_id,

@@ -93,11 +93,21 @@ def znuny_webhook():
     try:
         logger.info(f"[Webhook] Processing ticket {ticket_id}...")
    
-        znuny_service.diagnose_and_update_ticket(
+        result = znuny_service.diagnose_and_update_ticket(
             ticket_id=ticket_id,
             session_id=session_id,
             data=payload_json
         )
+        
+        # Check if ticket was skipped due to state filter
+        if isinstance(result, dict) and result.get("skipped"):
+            logger.info(f"[Webhook] Ticket {ticket_id} skipped: {result.get('reason')}")
+            return jsonify({
+                "status": "skipped",
+                "ticket_id": ticket_id,
+                "reason": result.get("reason")
+            }), 200
+        
         logger.info(f"[Webhook] Update for ticket {ticket_id} completed.")
         
     except Exception as e:
