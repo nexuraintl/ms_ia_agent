@@ -58,7 +58,7 @@ class AgentService:
                 type_id=data.get("type_id", 14),
                 requires_visual=bool(data.get("requires_visual", False)),
                 criticality_score=int(data.get("criticality_score", 5)),
-                is_security_alert=dbool(data.get("is_security_alert", False)),
+                is_security_alert=bool(data.get("is_security_alert", False)),
                 diagnostico=diagnostico_final,
                 raw_ai_response=response_text
             )
