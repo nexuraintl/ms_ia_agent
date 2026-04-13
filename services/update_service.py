@@ -42,7 +42,7 @@ class ZnunyService:
             self._kb_service = KnowledgeBaseService()
         return self._kb_service
 
-    # --- 1. MÉTODOS DE SESIÓN Y METADATA (Tus versiones robustas) ---
+    # --- 1. MÉTODOS DE SESIÓN Y METADATA ---
 
     def _login_create_session(self) -> str:
         if not all([self.username, self.password, self.base_url]):
@@ -158,13 +158,35 @@ class ZnunyService:
 
     def update_ticket(self, **kwargs):
         url = f"{self.base_url}/Ticket/{kwargs['ticket_id']}"
+        
+        # Construimos el payload siguiendo estrictamente el Manual Técnico
         payload = {
             "SessionID": kwargs['session_id'],
-            "Ticket": {"Title": kwargs['title'], "PriorityID": kwargs['priority_id'], "StateID": kwargs['state_id']},
-            "Article": {"Subject": kwargs['subject'], "Body": kwargs['body'], "ContentType": "text/plain", "SenderType": "system"}
+            "Ticket": {
+                "Title": kwargs['title'],
+                "PriorityID": kwargs['priority_id'],
+                "StateID": kwargs['state_id']
+            },
+            "Article": {
+                "Subject": kwargs['subject'],
+                "Body": kwargs['body'],
+                "ContentType": "text/plain; charset=utf8",
+                "MimeType": "text/plain",
+                "Charset": "utf8",
+                "SenderType": "system",
+                "HistoryType": "OwnerUpdate",
+                "HistoryComment": "Diagnóstico generado por IA"
+            }
         }
-        r = requests.patch(url, json=payload, timeout=15)
-        return r.json()
+        
+        try:
+            # El .yml confirma que es PATCH
+            r = requests.patch(url, json=payload, timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            logger.error(f"Error al actualizar ticket en Znuny: {e}")
+            return {"status": "error", "message": str(e)}
 
     def _call_multimodal_service(self, tid, txt):
         url = os.environ.get("MULTIMODAL_URL")
