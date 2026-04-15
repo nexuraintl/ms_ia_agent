@@ -6,7 +6,7 @@ import requests
 import datetime
 from typing import Optional, Dict, Any, Union
 # Importamos el modelo de datos para el tipado
-from .agent_service import AgentService, TicketDiagnosisResponse
+from .agent_service import AgentService, TicketDiagnosisResponse, TicketClassification
 from .knowledge_base_service import KnowledgeBaseService
 
 logger = logging.getLogger(__name__)
@@ -105,27 +105,44 @@ class ZnunyService:
 
         # B. Diagnóstico con IA (Aquí usamos el nuevo objeto Pydantic)
         tool_config = self._get_rag_tool_config()
-        ai: TicketDiagnosisResponse = self.agent_service.diagnose_ticket(ticket_text, tool_config)
+
+        # El RAG ayuda a decidir si es Diseño, Incidente o Consulta General
+        classification: TicketDiagnosisResponse = self.agent_service.classify_and_route(ticket_text, tool_config)
         
-        diagnosis_body = ai.diagnostico
-        type_id = ai.type_id
+        insumos_especialistas = ""
+        final_type_id = classification.type_id
 
         # C. Lógica de Servicios Externos (Multimodal / Logs)
-        if ai.requires_visual:
-            visual = self._call_multimodal_service(ticket_id, ticket_text)
-            if visual:
-                diagnosis_body = visual["diagnosis"]
-                type_id = visual["type_id"] or type_id
 
-        if type_id == 10: # Incidente
+        # Ruta 1: Diseño (Multimodal)
+        if classification.category == "diseño" or classification.requires_visual:
+            logger.info(f"🎨 Delegando a Multimodal por categoría: {classification.category}")
+            visual_data = self._call_multimodal_service(ticket_id, ticket_text)
+            if visual_data:
+                # Extraemos el diagnóstico técnico del multimodal como insumo
+                insumos_especialistas += f"\n[INSUMO VISUAL]: {visual_data.get('diagnosis', visual_data.get('diagnostico'))}"
+                final_type_id = visual_data.get("type_id") or final_type_id
+
+        # Ruta 2: Incidente / Crítico (Log Errors)
+        if classification.category == "incidente" or classification.is_critical:
+            logger.info(f"🛠️ Delegando a Log Errors por criticidad/categoría")
             client_info = self.agent_service.extract_client_info(metadata, ticket_text)
-            incident_payload = self._build_incident_data(ticket_id, metadata, diagnosis_body, type_id, client_info, ticket_text)
+            # Preparamos un payload preliminar para el monitor de logs
+            incident_payload = self._build_incident_data(
+                ticket_id, metadata, "Análisis en curso", final_type_id, client_info, ticket_text
+            )
             log_summary = self._notify_log_monitor(incident_payload)
             if log_summary:
-                diagnosis_body += f"\n\n─ ANALISIS TÉCNICO DE LOGS ─\n{log_summary}"
+                insumos_especialistas += f"\n[INSUMO TÉCNICO LOGS]: {log_summary}"
 
-        # D. Lógica de Emergencia
-        if ai.criticality_score >= 9 or ai.is_security_alert:
+        # D. GENERACIÓN DE REPORTE FINAL (UNIFICACIÓN CON RAG)
+        reporte: TicketDiagnosisResponse = self.agent_service.generate_final_report(
+            ticket_text, insumos_especialistas, tool_config
+        )
+
+        # Aplicar prefijo de emergencia si es necesario
+        diagnosis_body = reporte.diagnostico
+        if classification.is_critical:
             diagnosis_body = "🚨 [ALERTA CRÍTICA] PROTOCOLO DE EMERGENCIA ACTIVADO\n" + diagnosis_body
 
         # E. Update Final
@@ -180,7 +197,7 @@ class ZnunyService:
         }
         
         try:
-            # El .yml confirma que es PATCH
+
             r = requests.patch(url, json=payload, timeout=15)
             r.raise_for_status()
             return r.json()

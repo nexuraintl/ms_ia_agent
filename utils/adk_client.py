@@ -1,124 +1,87 @@
-from google import genai
-from google.genai import types
 import os
 import json
-import logging
-
-# Configuración de logger para Cloud Run
-logger = logging.getLogger(__name__)
+from google import genai
+from google.genai import types
 
 class ADKClient:
     def __init__(self):
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("La variable de entorno GOOGLE_API_KEY no está configurada.")
-        self.client = genai.Client(api_key=api_key)
+        self.client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+        self.model_id = "gemini-2.0-flash"
 
-    def diagnose_ticket(self, ticket_text, tool_config=None):
+    def _call_gemini(self, prompt: str, tool_config=None, response_mime="application/json"):
+        """Método base para llamadas a Gemini con soporte RAG."""
+        generate_config = types.GenerateContentConfig(
+            temperature=0.1,
+            response_mime_type=response_mime
+        )
+        if tool_config:
+            generate_config.tools = [tool_config] if not isinstance(tool_config, list) else tool_config
+
+        response = self.client.models.generate_content(
+            model=self.model_id,
+            contents=prompt,
+            config=generate_config
+        )
+        return response.text
+
+    def classify_with_rag(self, ticket_text: str, tool_config=None) -> str:
         """
-        Diagnostica y clasifica el ticket utilizando RAG y lógica de soporte avanzada.
+        PASO 1: Clasificación inicial (Triaje) usando RAG.
+        Determina si el ticket es de diseño, incidente o consulta general.
         """
-        try:
-            # 1. PROMPT OPTIMIZADO: Foco en discriminación Lógica vs Visual
-            prompt = f"""
-Eres un Ingeniero de Soporte Nivel 1 Senior en Nexura. Tu objetivo es realizar un triaje técnico preciso.
+        prompt = f"""
+        Actúa como el Clasificador de Entradas de la Mesa de Servicio Nexura.
+        Tu objetivo es determinar la ruta técnica del ticket basándote en su contenido y el historial (RAG).
 
-# INSTRUCCIONES DE ANÁLISIS
-1. **RAG (Knowledge Base)**: Consulta obligatoriamente tu base de conocimiento para buscar soluciones o contextos previos de Nexura.
-2. **Clasificación**: Identifica si es Incidente (10), Petición (14) o Requerimiento (19).
-3. **Seguridad**: Evalúa si hay brechas, ataques o riesgos de datos (is_security_alert).
-4. **Análisis Visual (Discriminación Crítica)**:
-   - Marca `requires_visual=true` SOLO si la falla es estética/gráfica (colores, fuentes, imágenes rotas, desalineación CSS).
-   - Marca `requires_visual=false` si el cambio es de lógica, aunque sea en un formulario (ej: hacer campo obligatorio, cambiar tipo de input, validación de cédula, horarios).
+        Categorías posibles:
+        1. "diseño": Ajustes visuales, UI/UX, logos, colores, HTML/CSS.
+        2. "incidente": Fallas técnicas, errores 500, lentitud, caídas de sistema.
+        3. "consulta_general": Dudas de proceso, normativa o uso que no requieren visión ni logs.
 
-# TABLA DE CLASIFICACIÓN
-- Incidente (10): Error, caída de servicio o mal funcionamiento de algo existente.
-- Petición (14): Configuración, creación de usuarios o dudas sobre el uso.
-- Requerimiento (19): Nuevas funciones, cambios en reglas de negocio o lógica de validación.
+        Reglas de Negocio:
+        - Si el score de criticidad es >= 9 o hay amenazas de seguridad, marca is_security_alert: true.
+        - Los incidentes técnicos tienen type_id: 10. Requerimientos: 14. Peticiones: 19.
 
-# REGLAS DE ORO
-- **Diagnóstico**: No entregues código JSON crudo de la base de conocimiento. Explica la solución de forma técnica pero legible.
-- **Seguridad**: Si se menciona Ransomware o acceso no autorizado, criticality_score = 10 y is_security_alert = true.
-- **Formato**: Responde EXCLUSIVAMENTE en JSON.
+        Ticket: {ticket_text}
 
-TICKET A ANALIZAR:
-{ticket_text}
+        Responde estrictamente en JSON con este formato:
+        {{
+            "category": "diseño | incidente | consulta_general",
+            "type_id": int,
+            "criticality_score": int (1-10),
+            "is_security_alert": bool,
+            "reasoning": "Breve explicación basada en el historial RAG"
+        }}
+        """
+        return self._call_gemini(prompt, tool_config)
 
-# FORMATO DE SALIDA (JSON)
-{{
-  "type_id": 10|14|19,
-  "criticality_score": 1-10,
-  "is_security_alert": true|false,
-  "requires_visual": true|false,
-  "diagnostico": "Tu explicación aquí..."
-}}
-"""
-            # Configuración de herramientas (RAG)
-            tools = []
-            if tool_config:
-                if isinstance(tool_config, list): tools.extend(tool_config)
-                else: tools.append(tool_config)
+    def generate_final_diagnosis(self, context: str, tool_config=None) -> str:
+        """
+        PASO 2: Redacción final unificando insumos de especialistas.
+        """
+        prompt = f"""
+        Eres el Agente de Diagnóstico Final de Nexura.
+        Debes redactar un diagnóstico legible y estructurado para Znuny.
 
-            # Usamos gemini-2.0-flash (la versión 2.5 no es estándar, 2.0 es la recomendada para RAG)
-            response = self.client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig( 
-                    temperature=0.2, # Baja para mantener consistencia en el JSON
-                    tools=tools
-                )
-            )
-            
-            # Limpieza y validación de la respuesta
-            res_text = response.text.strip()
-            if res_text.startswith("```"):
-                res_text = res_text.strip("`").replace("json", "").strip()
-            
-            return res_text
+        Contexto e Insumos:
+        {context}
 
-        except Exception as e:
-            logger.error(f"Error en diagnose_ticket: {e}")
-            return json.dumps({
-                "type_id": 14,
-                "criticality_score": 3,
-                "is_security_alert": False,
-                "requires_visual": False,
-                "diagnostico": f"Error procesando diagnóstico: {str(e)}"
-            })
+        Instrucciones:
+        - Si hubo un Protocolo de Emergencia, inicia con "[ALERTA CRÍTICA]".
+        - Resume la solución basándote en la base de conocimiento (RAG).
+        - No menciones nombres de microservicios internos, habla como soporte técnico.
+
+        Responde en JSON:
+        {{
+            "type_id": int,
+            "diagnostico": "Resumen profesional para el agente de primer nivel"
+        }}
+        """
+        return self._call_gemini(prompt, tool_config)
 
     def extract_client(self, metadata: dict, article_text: str) -> dict:
-        """
-        Identifica la entidad real afectada (Alcaldía, Gobernación, etc.)
-        """
-        try:
-            prompt = f"""
-Analiza el ticket e identifica la entidad real afectada.
-Nota: El 'customer_id' suele ser genérico. Busca nombres de instituciones en el texto.
-
-METADATA: {json.dumps(metadata, ensure_ascii=False)}
-CONTENIDO: {article_text}
-
-# FORMATO DE SALIDA (JSON)
-{{
-  "entidad": "Nombre de la empresa/entidad o 'No identificado'",
-  "contacto": "Nombre de la persona",
-  "email": "Email de contacto",
-  "problema_resumido": "Resumen técnico (max 50 palabras)",
-  "confianza": 0.0 a 1.0
-}}
-"""
-            response = self.client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.1)
-            )
-            
-            res_text = response.text.strip()
-            if res_text.startswith("```"):
-                res_text = res_text.strip("`").replace("json", "").strip()
-            
-            return json.loads(res_text)
-            
-        except Exception as e:
-            logger.error(f"Error en extract_client: {e}")
-            return {"entidad": "No identificado", "problema_resumido": str(e), "confianza": 0.0}
+        """Extrae la entidad y NIT del cliente real."""
+        prompt = f"Analiza esta metadata: {metadata} y texto: {article_text}. Extrae 'entidad' y 'nit' en JSON."
+        response = self._call_gemini(prompt)
+        try: return json.loads(response)
+        except: return {}
