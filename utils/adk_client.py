@@ -1,7 +1,10 @@
 import os
 import json
+import logging
 from google import genai
 from google.genai import types
+
+logger = logging.getLogger(__name__)
 
 class ADKClient:
     def __init__(self):
@@ -10,19 +13,28 @@ class ADKClient:
 
     def _call_gemini(self, prompt: str, tool_config=None, response_mime="application/json"):
         """Método base para llamadas a Gemini con soporte RAG."""
-        generate_config = types.GenerateContentConfig(
-            temperature=0.1,
-            response_mime_type=response_mime
-        )
-        if tool_config:
-            generate_config.tools = [tool_config] if not isinstance(tool_config, list) else tool_config
+        try:
+            generate_config = types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type=response_mime
+            )
+            # PROTECCIÓN CRÍTICA: Solo asignar tools si realmente hay contenido en tool_config
+            if tool_config:
+                if isinstance(tool_config, list) and len(tool_config) > 0:
+                    generate_config.tools = tool_config
+                elif not isinstance(tool_config, list):
+                    generate_config.tools = [tool_config]
 
-        response = self.client.models.generate_content(
-            model=self.model_id,
-            contents=prompt,
-            config=generate_config
-        )
-        return response.text
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=prompt,
+                config=generate_config
+            )
+            return response.text
+        
+        except Exception as e:
+            logger.error(f"Error en la llamada a Gemini: {e}")
+            return "{}" if response_mime == "application/json" else ""
 
     def classify_with_rag(self, ticket_text: str, tool_config=None) -> str:
         """
@@ -40,7 +52,7 @@ class ADKClient:
 
         Reglas de Negocio:
         - Si el score de criticidad es >= 9 o hay amenazas de seguridad, marca is_security_alert: true.
-        - Los incidentes técnicos tienen type_id: 10. Requerimientos: 14. Peticiones: 19.
+        - Incidentes: type_id 10. Requerimientos: type_id 14. Peticiones: type_id 19.
 
         Ticket: {ticket_text}
 
@@ -70,6 +82,8 @@ class ADKClient:
         - Si hubo un Protocolo de Emergencia, inicia con "[ALERTA CRÍTICA]".
         - Resume la solución basándote en la base de conocimiento (RAG).
         - No menciones nombres de microservicios internos, habla como soporte técnico.
+        - Si hay insumos de especialistas, intégralos de forma natural.
+        - Sé profesional y técnico.
 
         Responde en JSON:
         {{
