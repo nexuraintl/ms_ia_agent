@@ -1,0 +1,12 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/$_SERVICE_NAME:$COMMIT_SHA', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/$_SERVICE_NAME:$COMMIT_SHA']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    args: ['gcloud', 'run', 'deploy', '$_SERVICE_NAME', '--image=gcr.io/$PROJECT_ID/$_SERVICE_NAME:$COMMIT_SHA', '--region=$_REGION', '--platform=managed', '--port=8080', '--quiet']
+substitutions:
+  _SERVICE_NAME: default
+  _REGION: us-central1
+options:
+  logging: CLOUD_LOGGING_ONLY
