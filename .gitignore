@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Credenciales y secretos
 env_vars/.env
 *.key
@@ -74,3 +75,11 @@ env_vars/
 # Base de datos local (si usas SQLite para pruebas)
 *.db
 *.sqlite3
+=======
+env/
+venv/
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+>>>>>>> feature/health-version

@@ -22,6 +22,14 @@ app.include_router(agent_router, tags=["Agent"])
 async def health_check():
     return {"status": "healthy"}
 
+# 5. Version del microservicio
+@app.get("/version")
+async def version():
+    return {
+        "service": "ms_ia_agent",
+        "version": "1.0.0"
+    }
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8080))
