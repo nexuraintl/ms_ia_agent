@@ -1,4 +1,5 @@
 import os
+import tempfile
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -92,17 +93,6 @@ class GoogleDriveService:
             return ""
 
     def filter_and_format_incidents(self, spreadsheet_id, sheet_name="2. Consolidado Incidentes"):
-        """
-        Filtra y formatea incidentes desde columnas L1 y AC1.
-        Solo incluye filas donde ambos campos estén completos.
-        
-        Args:
-            spreadsheet_id: ID del Google Sheet
-            sheet_name: Nombre de la hoja (default: "2. Consolidado Incidentes")
-            
-        Returns:
-            list: Lista de documentos formateados, uno por incidente válido
-        """
         if not self.sheets_service:
             print("⚠️ Servicio de Sheets no inicializado.")
             return []
@@ -111,18 +101,24 @@ class GoogleDriveService:
             print(f"📊 Leyendo incidentes desde '{sheet_name}' (L:AC)...")
             
             sheet = self.sheets_service.spreadsheets()
+            # CORRECCIÓN AQUÍ: Eliminamos la variable temp_filename que estaba pegada
             result = sheet.values().get(
                 spreadsheetId=spreadsheet_id,
                 range=f"{sheet_name}!L:AC"
             ).execute()
             
             values = result.get('values', [])
+            if not values:
+                print("⚠️ No se encontraron datos en el rango especificado.")
+                return []
+
             incidents = []
             
             # Iterar desde fila 1 (saltar header)
             for i, row in enumerate(values[1:], start=1):
-                # Columna L es índice 0, AC es índice 17 (L=12, AC=29)
+                # Validamos que la fila tenga al menos los datos necesarios para evitar IndexError
                 l1_cell = row[0] if len(row) > 0 else ""
+                # El índice 17 corresponde a la columna AC si empezamos en L (L=0, M=1... AC=17)
                 ac1_cell = row[17] if len(row) > 17 else ""
                 
                 if l1_cell.strip() and ac1_cell.strip():
@@ -147,7 +143,8 @@ class GoogleDriveService:
         Returns:
             bool: True si la sincronización fue exitosa.
         """
-        temp_filename = f"temp_drive_{file_id}.txt"
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"temp_drive_{file_id}.txt")
         try:
             print(f"🔄 Sincronizando Drive {file_id} -> KB {store_name}...")
             
@@ -155,14 +152,14 @@ class GoogleDriveService:
             if not content:
                 return False
                 
-            with open(temp_filename, "w") as f:
+            with open(temp_path, "w", encoding="utf-8") as f:
                 f.write(content)
                 
-            return kb_service.upload_and_index_file(store_name, temp_filename)
+            return kb_service.upload_and_index_file(store_name, temp_path)
                 
         except Exception as e:
             print(f"❌ Error en sincronización: {e}")
             return False
         finally:
-            if os.path.exists(temp_filename):
-                os.remove(temp_filename)
+            if os.path.exists(temp_path):
+                os.remove(temp_path)

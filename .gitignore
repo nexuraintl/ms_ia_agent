@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Credenciales y secretos
 env_vars/.env
 *.key
@@ -64,3 +65,21 @@ services/sql_knowledge_service.py
 sync_sql_to_kb.py
 verify_sql_rag.py
 manual_tecnico_usuario.md
+
+# Google Service Account y Secretos
+permisos.json
+env_new/
+env_vars/
+.env
+
+# Base de datos local (si usas SQLite para pruebas)
+*.db
+*.sqlite3
+=======
+env/
+venv/
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+>>>>>>> feature/health-version

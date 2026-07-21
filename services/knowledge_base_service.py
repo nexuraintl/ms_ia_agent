@@ -72,7 +72,9 @@ class KnowledgeBaseService:
             # file_search espera un objeto FileSearch o dict
             # El campo correcto es 'file_search_store_names' (lista de strings)
             file_search=types.FileSearch(
-                file_search_store_names=[store_name]
+                file_search_stores=[
+                    types.FileSearchStore(name=store_name)
+                    ]
             )
         )
 

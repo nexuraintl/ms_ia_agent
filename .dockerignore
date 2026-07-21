@@ -41,4 +41,13 @@ temp_*.txt
 
 # CI/CD
 .github/
-.azure-pipeline.yml
+.azure-pipelines.yml
+
+# Credenciales (Inyectar vía Cloud Secrets)
+env_vars/
+env_new/
+*.json
+*.env
+
+# Scripts de mantenimiento/sincronización manual
+sync_*.py

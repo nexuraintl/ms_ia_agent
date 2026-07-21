@@ -1,57 +1,95 @@
-# services/agent_service.py
-
-from utils.adk_client import ADKClient
 import json
 import logging
-from typing import Union, Dict, Optional
+from typing import Union, Dict, Optional, Any
+from pydantic import BaseModel, Field
+from utils.adk_client import ADKClient
 
+# Configuración de logging
 logger = logging.getLogger(__name__)
+
+# --- Modelos de Datos para asegurar la sintonía con el flujo ---
+
+class TicketClassification(BaseModel):
+    """Resultado del Triaje inicial del Orquestador."""
+    category: str = Field(description="diseño | incidente | consulta_general")
+    type_id: int  # 10: Incidente, 14: Requerimiento, 19: Petición [cite: 14]
+    is_critical: bool = False
+    requires_visual: bool = False
+    reasoning: str # Breve explicación de la ruta elegida
+
+class TicketDiagnosisResponse(BaseModel):
+    """Esquema para la respuesta final que irá a Znuny."""
+    type_id: Optional[int] = None
+    diagnostico: str
+    raw_ai_response: Optional[str] = None 
+
+# --- Clase de Servicio ---
 
 class AgentService:
     def __init__(self):
         self.adk_client = ADKClient()
 
-    def diagnose_ticket(self, ticket_text: str, tool_config=None) -> Union[str, Dict[str, Optional[str]]]:
+    def classify_and_route(self, ticket_text: str, tool_config=None) -> TicketClassification:
         """
-        Calls the model, receives a JSON string, parses it, and returns the formatted
-        diagnosis text for the Znuny article.
+        PASO 1: Clasifica el ticket usando RAG para determinar la ruta[cite: 35, 43].
+        Determina si el ticket va a Multimodal, Log_Errors o Agente (Otros)[cite: 6].
         """
-        response_text = self.adk_client.diagnose_ticket(ticket_text, tool_config)
+        logger.info("🤖 Clasificando ticket con RAG...")
         
-        if not response_text:
-            logger.warning("Automatic diagnosis unavailable (AI Model did not respond).")
-            return "Diagnóstico automático no disponible (Modelo de IA no respondió)."
-
-        # Try to parse the JSON returned by the IA
+        # El ADKClient debe implementar este método con un prompt de clasificación
+        response_text = self.adk_client.classify_with_rag(ticket_text, tool_config)
+        
         try:
-            # Sometimes the IA returns JSON wrapped in markdown code blocks
-            cleaned = response_text.strip().strip("`").replace("json", "")
-            data = json.loads(cleaned)
-            diagnostico = data.get("diagnostico") or data.get("diagnosis")
-            type_id = data.get("type_id")
-            requires_visual = data.get("requires_visual", False)
-            criticality_score = data.get("criticality_score", 5) # Default to 5
-            is_security_alert = data.get("is_security_alert", False)
+            data = json.loads(response_text)
+            
+            # Determinamos si requiere visual basándonos en la categoría 
+            is_design = data.get("category") == "diseño"
+            
+            return TicketClassification(
+                category=data.get("category", "consulta_general"),
+                type_id=data.get("type_id", 19),
+                is_critical=bool(data.get("criticality_score", 0) >= 9 or data.get("is_security_alert")), # [cite: 51, 67]
+                requires_visual=is_design,
+                reasoning=data.get("reasoning", "Clasificación estándar")
+            )
+        except Exception as e:
+            logger.error(f"Error parseando clasificación: {e}")
+            # Fallback seguro: Ruta general
+            return TicketClassification(
+                category="consulta_general",
+                type_id=19,
+                reasoning="Error en clasificación, se redirige a consulta general"
+            )
 
-            if not diagnostico:
-                logger.warning("Automatic diagnosis unavailable (AI returned empty diagnosis field).")
-                return "Diagnóstico automático no disponible (IA no entregó campo diagnóstico)."
-
-            return {
-                "type_id": type_id,
-                "requires_visual": requires_visual,
-                "criticality_score": criticality_score,
-                "is_security_alert": is_security_alert,
-                "diagnostico": diagnostico or "Diagnóstico no disponible (IA vacía)."
-            }
-
-        except json.JSONDecodeError:
-            # If not JSON, return text only
-            logger.info("AI response was not JSON, returning raw text.")
-            return {"diagnostico": response_text.strip(), "type_id": None, "requires_visual": False}
+    def generate_final_report(self, original_text: str, insumos_especialistas: str, tool_config=None) -> TicketDiagnosisResponse:
+        """
+        PASO 2: Redacta el diagnóstico final para Znuny combinando el ticket original
+        con los insumos recibidos de los especialistas (Multimodal o Logs)[cite: 17, 32].
+        """
+        logger.info("✍️ Redactando diagnóstico final estructurado...")
+        
+        # Combinamos la información para que Gemini genere la nota final [cite: 58, 59]
+        contexto_final = f"""
+        Ticket Original: {original_text}
+        Insumos de especialistas: {insumos_especialistas}
+        """
+        
+        response_text = self.adk_client.generate_final_diagnosis(contexto_final, tool_config)
+        
+        try:
+            data = json.loads(response_text)
+            return TicketDiagnosisResponse(
+                type_id=data.get("type_id"),
+                diagnostico=data.get("diagnostico") or data.get("diagnosis")
+            )
+        except:
+            return TicketDiagnosisResponse(diagnostico=response_text)
 
     def extract_client_info(self, metadata: dict, article_text: str) -> dict:
-        """
-        Extrae información del cliente real de un ticket de tipo Incidente.
-        """
-        return self.adk_client.extract_client(metadata, article_text)
+        """Extrae información del cliente real[cite: 102, 106]."""
+        try:
+            client_info = self.adk_client.extract_client(metadata, article_text)
+            return client_info if isinstance(client_info, dict) else {}
+        except Exception as e:
+            logger.error(f"Error extrayendo información del cliente: {e}")
+            return {"error": "No se pudo extraer información"}
