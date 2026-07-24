@@ -9,7 +9,8 @@ logger = logging.getLogger(__name__)
 class ADKClient:
     def __init__(self):
         self.client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-        self.model_id = "gemini-2.0-flash"
+        # gemini-2.0-flash fue retirado (shutdown); se migra a gemini-3.6-flash (estable, sin fecha de baja anunciada)
+        self.model_id = "gemini-3.6-flash"
 
     def _call_gemini(self, prompt: str, tool_config=None, response_mime="application/json"):
         """Método base para llamadas a Gemini con soporte RAG."""
