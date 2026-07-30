@@ -3,6 +3,7 @@ import logging
 from typing import Union, Dict, Optional, Any
 from pydantic import BaseModel, Field
 from utils.adk_client import ADKClient
+from utils.json_parse import extract_json
 
 # Configuración de logging
 logger = logging.getLogger(__name__)
@@ -21,7 +22,8 @@ class TicketDiagnosisResponse(BaseModel):
     """Esquema para la respuesta final que irá a Znuny."""
     type_id: Optional[int] = None
     diagnostico: str
-    raw_ai_response: Optional[str] = None 
+    faq_referencia: Optional[str] = None
+    raw_ai_response: Optional[str] = None
 
 # --- Clase de Servicio ---
 
@@ -40,9 +42,9 @@ class AgentService:
         response_text = self.adk_client.classify_with_rag(ticket_text, tool_config)
         
         try:
-            data = json.loads(response_text)
-            
-            # Determinamos si requiere visual basándonos en la categoría 
+            data = json.loads(extract_json(response_text))
+
+            # Determinamos si requiere visual basándonos en la categoría
             is_design = data.get("category") == "diseño"
             
             return TicketClassification(
@@ -77,12 +79,14 @@ class AgentService:
         response_text = self.adk_client.generate_final_diagnosis(contexto_final, tool_config)
         
         try:
-            data = json.loads(response_text)
+            data = json.loads(extract_json(response_text))
             return TicketDiagnosisResponse(
                 type_id=data.get("type_id"),
-                diagnostico=data.get("diagnostico") or data.get("diagnosis")
+                diagnostico=data.get("diagnostico") or data.get("diagnosis"),
+                faq_referencia=data.get("faq_referencia")
             )
-        except:
+        except Exception as e:
+            logger.error(f"Error parseando diagnóstico final: {e}")
             return TicketDiagnosisResponse(diagnostico=response_text)
 
     def extract_client_info(self, metadata: dict, article_text: str) -> dict:

@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from controllers.agent_controller import router as agent_router
+from controllers.admin_controller import router as admin_router
 
 # 1. Cargar variables de entorno
 load_dotenv("env_vars/.env")
@@ -16,6 +17,7 @@ app = FastAPI(
 # 3. Registrar Rutas (Sin prefijo para mantener compatibilidad)
 # Al quitar el prefix, la ruta será directamente /znuny-webhook
 app.include_router(agent_router, tags=["Agent"])
+app.include_router(admin_router, tags=["Admin"])
 
 # 4. Root Health Check (Requerido por Cloud Run)
 @app.get("/health")

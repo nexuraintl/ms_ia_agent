@@ -5,6 +5,7 @@ import time
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from google.genai import types
 from services.knowledge_base_service import KnowledgeBaseService
 from utils.adk_client import ADKClient
 
@@ -40,24 +41,39 @@ def verify_rag():
         # 5. Probar ADKClient con la herramienta
         print("\n🤖 Probando ADKClient con RAG...")
         client = ADKClient()
-        
+
         # Ticket que requiere la info del archivo
         ticket_text = "Ayuda, me sale el Error 999 cuando intento facturar en Ventas. No sé qué hacer."
-        
-        tool_config = kb_service.get_tool_config(store_name)
-        
-        # Llamada real a Gemini
-        response = client.diagnose_ticket(ticket_text, tool_config=tool_config)
-        
+
+        tool_config = kb_service.get_tool_config([store_name])
+
+        # Llamada real a Gemini. classify_with_rag ya no fuerza JSON mode
+        # cuando hay tool_config (JSON mode + file_search produce
+        # candidates=None de forma silenciosa — confirmado empíricamente).
+        response = client.classify_with_rag(ticket_text, tool_config=tool_config)
+
         print("\n📝 Respuesta de Gemini:")
         print("-" * 40)
         print(response)
         print("-" * 40)
-        
-        if "unlock_sales.sh" in str(response):
-            print("✅ ÉXITO: El modelo recuperó la información del archivo (mencionó 'unlock_sales.sh').")
+
+        # La prueba objetiva es grounding_metadata, no el match de texto: el
+        # texto puede parafrasear el contenido del archivo sin citarlo literal.
+        raw_response = client.client.models.generate_content(
+            model=client.model_id,
+            contents=ticket_text,
+            config=types.GenerateContentConfig(temperature=0.1, tools=[tool_config]),
+        )
+        grounding = None
+        try:
+            grounding = raw_response.candidates[0].grounding_metadata
+        except Exception:
+            pass
+
+        if grounding and grounding.grounding_chunks:
+            print(f"✅ ÉXITO: grounding_metadata presente con {len(grounding.grounding_chunks)} chunk(s).")
         else:
-            print("⚠️ ADVERTENCIA: El modelo no pareció usar la información específica del archivo.")
+            print("⚠️ ADVERTENCIA: la respuesta no trae grounding_metadata; el RAG no está recuperando nada.")
 
     except Exception as e:
         print(f"❌ Error durante la verificación: {e}")

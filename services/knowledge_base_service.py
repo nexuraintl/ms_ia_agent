@@ -1,6 +1,16 @@
 import os
+import time
+import logging
 from google import genai
 from google.genai import types
+
+logger = logging.getLogger(__name__)
+
+
+class KnowledgeBaseServiceError(Exception):
+    """Error irrecuperable operando sobre un File Search Store."""
+    pass
+
 
 class KnowledgeBaseService:
     """
@@ -14,67 +24,139 @@ class KnowledgeBaseService:
             raise ValueError("La variable de entorno GOOGLE_API_KEY no está configurada.")
         self.client = genai.Client(api_key=api_key)
 
+    def get_store_by_display_name(self, display_name: str) -> str | None:
+        """Busca un File Search Store existente por nombre. No crea nada."""
+        for store in self.client.file_search_stores.list():
+            if store.display_name == display_name:
+                return store.name
+        return None
+
     def get_or_create_store(self, display_name: str = "Znuny_Knowledge_Base") -> str:
         """
         Busca un File Search Store existente por nombre o crea uno nuevo.
         Retorna el `name` (resource ID) del store.
+        Lanza KnowledgeBaseServiceError si falla: un store roto no debe propagarse
+        como string vacío hasta un types.Tool.
         """
-        print(f"🔍 Buscando File Search Store: '{display_name}'...")
-        
+        logger.info("Buscando File Search Store: '%s'...", display_name)
         try:
-            # 1. Listar stores existentes para evitar duplicados
-            for store in self.client.file_search_stores.list():
-                if store.display_name == display_name:
-                    print(f"✅ Store encontrado: {store.name}")
-                    return store.name
-            
-            # 2. Si no existe, crear
-            print(f"⚠️ No encontrado. Creando nuevo store '{display_name}'...")
-            store = self.client.file_search_stores.create(
-                config={'display_name': display_name}
-            )
-            print(f"✅ Store creado exitosamente: {store.name}")
+            existing = self.get_store_by_display_name(display_name)
+            if existing:
+                logger.info("Store encontrado: %s", existing)
+                return existing
+
+            logger.info("No encontrado. Creando nuevo store '%s'...", display_name)
+            store = self.client.file_search_stores.create(config={"display_name": display_name})
+            logger.info("Store creado exitosamente: %s", store.name)
             return store.name
         except Exception as e:
-            print(f"❌ Error gestionando store: {e}")
-            return ""
+            logger.exception("Error gestionando store '%s'", display_name)
+            raise KnowledgeBaseServiceError(f"No se pudo obtener/crear el store '{display_name}': {e}") from e
 
-
-    def upload_and_index_file(self, store_name: str, file_path: str) -> bool:
+    def find_versioned_stores(self, prefix: str) -> list:
         """
-        Método combinado para subir e indexar un archivo en el store.
-        Reemplaza a upload_file_to_store + add_files_to_store para simplificar.
+        Devuelve los stores cuyo display_name empieza por `prefix`, ordenados
+        por display_name descendente (el timestamp en el nombre define el orden).
+        """
+        matches = [s for s in self.client.file_search_stores.list() if s.display_name and s.display_name.startswith(prefix)]
+        matches.sort(key=lambda s: s.display_name, reverse=True)
+        return matches
+
+    def resolve_active_store(self, prefix: str) -> str | None:
+        """Devuelve el `name` del store versionado más reciente con ese prefijo, o None."""
+        matches = self.find_versioned_stores(prefix)
+        return matches[0].name if matches else None
+
+    def delete_store(self, store_name: str) -> None:
+        """Borra un store por completo (documentos incluidos)."""
+        try:
+            self.client.file_search_stores.delete(name=store_name, config={"force": True})
+            logger.info("Store eliminado: %s", store_name)
+        except Exception:
+            logger.exception("Error eliminando store %s", store_name)
+            raise KnowledgeBaseServiceError(f"No se pudo eliminar el store '{store_name}'")
+
+    def prune_versioned_stores(self, prefix: str, keep: int = 2) -> list:
+        """Conserva los `keep` stores más recientes con ese prefijo y borra el resto."""
+        matches = self.find_versioned_stores(prefix)
+        to_delete = matches[keep:]
+        deleted = []
+        for store in to_delete:
+            self.delete_store(store.name)
+            deleted.append(store.name)
+        return deleted
+
+    def upload_and_index_file(
+        self,
+        store_name: str,
+        file_path: str,
+        display_name: str | None = None,
+        custom_metadata: dict | None = None,
+        chunk_size_tokens: int | None = None,
+        chunk_overlap_tokens: int | None = None,
+        timeout_s: int = 300,
+        poll_interval_s: int = 5,
+    ) -> bool:
+        """
+        Sube un archivo al store y espera a que termine de indexarse.
+        `upload_to_file_search_store` devuelve una operación de larga duración:
+        si no se espera, el archivo puede no estar disponible aún para consultas.
+
+        `custom_metadata` es un dict simple {clave: valor}; el SDK espera una
+        lista de `types.CustomMetadata`, así que se convierte aquí.
         """
         try:
-            print(f"📤 Subiendo e indexando {file_path} en {store_name}...")
-            # Usamos el método de conveniencia del cliente
-            self.client.file_search_stores.upload_to_file_search_store(
+            logger.info("Subiendo e indexando %s en %s...", file_path, store_name)
+            config_kwargs = {}
+            if display_name:
+                config_kwargs["display_name"] = display_name
+            if custom_metadata:
+                config_kwargs["custom_metadata"] = [
+                    types.CustomMetadata(key=k, string_value=str(v))
+                    for k, v in custom_metadata.items()
+                ]
+            if chunk_size_tokens or chunk_overlap_tokens:
+                config_kwargs["chunking_config"] = types.ChunkingConfig(
+                    white_space_config=types.WhiteSpaceConfig(
+                        max_tokens_per_chunk=chunk_size_tokens,
+                        max_overlap_tokens=chunk_overlap_tokens,
+                    )
+                )
+
+            op = self.client.file_search_stores.upload_to_file_search_store(
                 file_search_store_name=store_name,
-                file=file_path
+                file=file_path,
+                config=types.UploadToFileSearchStoreConfig(**config_kwargs) if config_kwargs else None,
             )
-            print("✅ Archivo indexado correctamente.")
+
+            deadline = time.monotonic() + timeout_s
+            while not op.done:
+                if time.monotonic() > deadline:
+                    raise KnowledgeBaseServiceError(
+                        f"Timeout esperando indexado de {file_path} en {store_name} (> {timeout_s}s)"
+                    )
+                time.sleep(poll_interval_s)
+                op = self.client.operations.get(op)
+
+            if getattr(op, "error", None):
+                raise KnowledgeBaseServiceError(f"Fallo indexando {file_path}: {op.error}")
+
+            logger.info("Archivo indexado correctamente: %s", file_path)
             return True
+        except KnowledgeBaseServiceError:
+            raise
         except Exception as e:
-            print(f"❌ Error en upload_to_file_search_store: {e}")
-            return False
+            logger.exception("Error en upload_to_file_search_store para %s", file_path)
+            raise KnowledgeBaseServiceError(f"No se pudo indexar {file_path} en {store_name}: {e}") from e
 
-    def get_tool_config(self, store_name: str) -> types.Tool:
+    def get_tool_config(self, store_names: list) -> types.Tool:
         """
-        Retorna la configuración de la herramienta para usar en generate_content.
+        Retorna la configuración de la herramienta File Search para generate_content.
+        Recibe una lista de nombres de store (resource IDs) — el campo real del SDK
+        es `file_search_store_names`, no `file_search_stores`.
         """
-        # Configuración correcta para File Search Tool
-        # Según inspección: types.Tool tiene 'file_search'
-        # Y types.FileSearch probablemente tenga 'file_search_store' o similar.
-        # Vamos a asumir la estructura estándar:
+        if isinstance(store_names, str):
+            store_names = [store_names]
         return types.Tool(
-            google_search=None,
-            code_execution=None,
-            # file_search espera un objeto FileSearch o dict
-            # El campo correcto es 'file_search_store_names' (lista de strings)
-            file_search=types.FileSearch(
-                file_search_stores=[
-                    types.FileSearchStore(name=store_name)
-                    ]
-            )
+            file_search=types.FileSearch(file_search_store_names=store_names)
         )
-

@@ -13,4 +13,6 @@ ENV PORT=8080
 EXPOSE 8080
 
 # IMPORTANTE: Cambiamos a uvicorn para FastAPI
-CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
+# Forma shell (no exec form) para que $PORT se expanda; Cloud Run inyecta
+# un puerto distinto de 8080 en algunos entornos.
+CMD python -m uvicorn app:app --host 0.0.0.0 --port ${PORT}

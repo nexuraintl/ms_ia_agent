@@ -1,8 +1,29 @@
-fastapi
-uvicorn[standard]
-google-genai
-python-dotenv
-google-adk
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
+# Framework web
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
+
+# Gemini / File Search RAG
+google-genai==2.15.0
+
+# Configuración
+python-dotenv==1.2.2
+pydantic==2.13.4
+pydantic-settings==2.14.2
+
+# Google Drive / Sheets (KB de Drive)
+google-api-python-client==2.198.0
+google-auth==2.56.2
+google-auth-httplib2==0.4.0
+google-auth-oauthlib==1.4.0
+
+# Znuny API / servicios externos
+requests==2.34.2
+
+# FAQs (MariaDB, módulo FAQ de Znuny)
+PyMySQL==1.2.0
+cryptography==49.0.0
+
+# Testing
+pytest==9.1.1
+pytest-mock==3.15.1
+httpx==0.28.1

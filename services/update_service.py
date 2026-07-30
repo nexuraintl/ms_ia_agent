@@ -7,7 +7,8 @@ import datetime
 from typing import Optional, Dict, Any, Union
 # Importamos el modelo de datos para el tipado
 from .agent_service import AgentService, TicketDiagnosisResponse, TicketClassification
-from .knowledge_base_service import KnowledgeBaseService
+from .knowledge_base_service import KnowledgeBaseService, KnowledgeBaseServiceError
+from config import obtener_configuracion
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,8 @@ class ZnunyService:
         self._cached_session_ts: float = 0.0
         self._agent_service: Optional[AgentService] = None
         self._kb_service: Optional[KnowledgeBaseService] = None
+        self._cached_tool_config = None
+        self._cached_tool_config_ts: float = 0.0
 
     @property
     def agent_service(self) -> AgentService:
@@ -107,7 +110,7 @@ class ZnunyService:
         tool_config = self._get_rag_tool_config()
 
         # El RAG ayuda a decidir si es Diseño, Incidente o Consulta General
-        classification: TicketDiagnosisResponse = self.agent_service.classify_and_route(ticket_text, tool_config)
+        classification: TicketClassification = self.agent_service.classify_and_route(ticket_text, tool_config)
         
         insumos_especialistas = ""
         final_type_id = classification.type_id
@@ -226,10 +229,46 @@ class ZnunyService:
             return None
 
     def _get_rag_tool_config(self):
+        """
+        Resuelve los stores de RAG (Drive + FAQs) y construye el tool_config.
+        No crea nada en el camino caliente del ticket: si un store no existe,
+        simplemente no se incluye. Cacheado con TTL porque este método corre
+        en cada ticket y resolver stores implica listar por red.
+        """
+        settings = obtener_configuracion()
+        if not settings.rag_enabled:
+            return None
+
+        now = time.time()
+        if self._cached_tool_config is not None and (now - self._cached_tool_config_ts) < settings.rag_store_cache_ttl_seconds:
+            return self._cached_tool_config
+
         try:
-            store = self.kb_service.get_or_create_store(display_name="Znuny_Tickets_KB")
-            return self.kb_service.get_tool_config(store)
-        except: return None
+            names = []
+            drive_store = self.kb_service.get_store_by_display_name(settings.drive_store_name)
+            if drive_store:
+                names.append(drive_store)
+            faq_store = self.kb_service.resolve_active_store(settings.faq_store_prefix)
+            if faq_store:
+                names.append(faq_store)
+
+            if not names:
+                logger.warning("RAG: sin stores resueltos; se continúa sin recuperación")
+                self._cached_tool_config = None
+                self._cached_tool_config_ts = now
+                return None
+
+            logger.info("RAG activo con stores: %s", names)
+            tool_config = self.kb_service.get_tool_config(names)
+            self._cached_tool_config = tool_config
+            self._cached_tool_config_ts = now
+            return tool_config
+        except KnowledgeBaseServiceError:
+            logger.exception("RAG: fallo construyendo tool config")
+            return None
+        except Exception:
+            logger.exception("RAG: fallo inesperado resolviendo stores")
+            return None
 
     def _build_incident_data(self, tid, meta, diag, type_id, client, txt):
         return {
