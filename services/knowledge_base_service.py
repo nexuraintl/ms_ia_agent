@@ -24,12 +24,57 @@ class KnowledgeBaseService:
             raise ValueError("La variable de entorno GOOGLE_API_KEY no está configurada.")
         self.client = genai.Client(api_key=api_key)
 
+    @staticmethod
+    def _created_at(store) -> str:
+        """create_time como string ordenable; '' si el SDK no lo expone."""
+        return str(getattr(store, "create_time", "") or "")
+
     def get_store_by_display_name(self, display_name: str) -> str | None:
-        """Busca un File Search Store existente por nombre. No crea nada."""
+        """
+        Busca un File Search Store existente por nombre. No crea nada.
+
+        Devolver el primer match de un listado sin orden garantizado es
+        peligroso cuando hay homónimos: se elegiría un store arbitrario, quizá
+        vacío, y el RAG quedaría mudo sin lanzar ningún error. Ante duplicados
+        se avisa y se resuelve por el más reciente.
+        """
+        matches = [s for s in self.client.file_search_stores.list() if s.display_name == display_name]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            logger.warning(
+                "Hay %d stores con display_name '%s'; se usa el más reciente. "
+                "Revisar duplicados con GET /admin/kb-stores.",
+                len(matches), display_name,
+            )
+            matches.sort(key=self._created_at, reverse=True)
+        return matches[0].name
+
+    def inventory_stores(self, include_documents: bool = False) -> list:
+        """
+        Inventario de todos los File Search Stores de la cuenta.
+        Sirve para detectar stores duplicados que compiten por el mismo nombre
+        lógico. Contar documentos cuesta una llamada por store: es opcional.
+        """
+        inventario = []
         for store in self.client.file_search_stores.list():
-            if store.display_name == display_name:
-                return store.name
-        return None
+            info = {
+                "name": store.name,
+                "display_name": store.display_name,
+                "create_time": self._created_at(store),
+            }
+            if include_documents:
+                info["documents"] = self.count_documents(store.name)
+            inventario.append(info)
+        return inventario
+
+    def count_documents(self, store_name: str) -> int | None:
+        """Cantidad de documentos indexados en un store; None si no se pudo consultar."""
+        try:
+            return sum(1 for _ in self.client.file_search_stores.documents.list(parent=store_name))
+        except Exception:
+            logger.exception("No se pudo contar documentos de %s", store_name)
+            return None
 
     def get_or_create_store(self, display_name: str = "Znuny_Knowledge_Base") -> str:
         """

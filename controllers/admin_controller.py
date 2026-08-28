@@ -45,6 +45,31 @@ def rag_status():
     }
 
 
+@router.get("/kb-stores")
+def kb_stores(con_documentos: bool = False):
+    """
+    Inventario de File Search Stores agrupado por display_name.
+
+    Varios stores con el mismo nombre lógico hacen que la resolución del RAG
+    dependa del orden del listado, con el riesgo de terminar consultando un
+    store vacío sin ningún error visible. `con_documentos=true` cuenta los
+    documentos de cada store: es una llamada por store, así que es opt-in.
+    """
+    kb = KnowledgeBaseService()
+    stores = kb.inventory_stores(include_documents=con_documentos)
+
+    grupos = {}
+    for store in stores:
+        grupos.setdefault(store["display_name"] or "(sin display_name)", []).append(store)
+
+    return {
+        "total_stores": len(stores),
+        "nombres_distintos": len(grupos),
+        "duplicados": {n: len(v) for n, v in sorted(grupos.items()) if len(v) > 1},
+        "grupos": grupos,
+    }
+
+
 @router.get("/faq-schema")
 def faq_schema():
     """
