@@ -13,6 +13,10 @@ from config import obtener_configuracion
 logger = logging.getLogger(__name__)
 
 class ZnunyService:
+    # 10: Incidente, 14: Requerimiento, 19: Petición. Se validan antes de
+    # mandarlos a Znuny: el type_id del diagnóstico lo redacta el modelo.
+    TIPOS_VALIDOS = {10, 14, 19}
+
     SYSTEM_PATTERNS = [
         "La solicitud ha sido registrada",
         "Cordial saludo",
@@ -143,10 +147,21 @@ class ZnunyService:
             ticket_text, insumos_especialistas, tool_config
         )
 
+        # El diagnóstico final es la última palabra sobre el tipo porque ya vio
+        # los insumos de los especialistas; si no devuelve uno válido se conserva
+        # el de la clasificación inicial.
+        if reporte.type_id in self.TIPOS_VALIDOS:
+            final_type_id = reporte.type_id
+
         # Aplicar prefijo de emergencia si es necesario
         diagnosis_body = reporte.diagnostico
         if classification.is_critical:
             diagnosis_body = "🚨 [ALERTA CRÍTICA] PROTOCOLO DE EMERGENCIA ACTIVADO\n" + diagnosis_body
+
+        logger.info(
+            "Ticket %s: categoría=%s type_id=%s crítico=%s",
+            ticket_id, classification.category, final_type_id, classification.is_critical
+        )
 
         # E. Update Final
         return self.update_ticket(
@@ -157,6 +172,7 @@ class ZnunyService:
             queue_id=metadata.get("QueueID", 9),
             priority_id=metadata.get("PriorityID", 3),
             state_id=metadata.get("StateID", 1),
+            type_id=final_type_id,
             subject="Diagnóstico Automático Nexura IA",
             body=f"[Procesado por: mod_agentes]\n\n{diagnosis_body}"
         )
@@ -180,13 +196,20 @@ class ZnunyService:
         url = f"{self.base_url}/Ticket/{kwargs['ticket_id']}"
         
         # Construimos el payload siguiendo estrictamente el Manual Técnico
+        ticket_fields = {
+            "Title": kwargs['title'],
+            "PriorityID": kwargs['priority_id'],
+            "StateID": kwargs['state_id']
+        }
+
+        # Sin TypeID el triaje no se aplica: el ticket queda con el tipo que
+        # traía y toda la clasificación se pierde.
+        if kwargs.get('type_id'):
+            ticket_fields["TypeID"] = kwargs['type_id']
+
         payload = {
             "SessionID": kwargs['session_id'],
-            "Ticket": {
-                "Title": kwargs['title'],
-                "PriorityID": kwargs['priority_id'],
-                "StateID": kwargs['state_id']
-            },
+            "Ticket": ticket_fields,
             "Article": {
                 "Subject": kwargs['subject'],
                 "Body": kwargs['body'],

@@ -1,8 +1,16 @@
 import os
+import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from controllers.agent_controller import router as agent_router
 from controllers.admin_controller import router as admin_router
+
+# Sin basicConfig el root logger queda en WARNING y todo logger.info() del
+# servicio se descarta antes de llegar a Cloud Logging.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 # 1. Cargar variables de entorno
 load_dotenv("env_vars/.env")
