@@ -68,6 +68,37 @@ class KnowledgeBaseService:
             inventario.append(info)
         return inventario
 
+    def prune_empty_stores(self, display_name: str, apply: bool = False) -> dict:
+        """
+        Borra los stores SIN documentos que tengan exactamente ese display_name.
+
+        Acotado a propósito: exige el nombre exacto y solo elimina stores con
+        cero documentos confirmados. Si no se pudo contar (None) el store se
+        deja en paz — nunca se borra algo cuyo contenido no pudimos verificar.
+        Dry-run por defecto: sin apply=True solo informa qué borraría.
+        """
+        candidatos = []
+        for store in self.client.file_search_stores.list():
+            if store.display_name != display_name:
+                continue
+            if self.count_documents(store.name) == 0:
+                candidatos.append(store.name)
+
+        borrados = []
+        if apply:
+            for name in candidatos:
+                self.delete_store(name)
+                borrados.append(name)
+            logger.info("Prune de '%s': %d stores vacíos eliminados", display_name, len(borrados))
+
+        return {
+            "display_name": display_name,
+            "aplicado": apply,
+            "vacios_encontrados": len(candidatos),
+            "borrados": len(borrados),
+            "candidatos": candidatos,
+        }
+
     def count_documents(self, store_name: str) -> int | None:
         """Cantidad de documentos indexados en un store; None si no se pudo consultar."""
         try:

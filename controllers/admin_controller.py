@@ -4,7 +4,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException
 
 from utils.admin_auth import require_admin
-from services.knowledge_base_service import KnowledgeBaseService
+from services.knowledge_base_service import KnowledgeBaseService, KnowledgeBaseServiceError
 from services.faq_repository import FaqRepository, FaqRepositoryError
 from services.faq_sync_service import FaqSyncService
 from config import obtener_configuracion
@@ -68,6 +68,22 @@ def kb_stores(con_documentos: bool = False):
         "duplicados": {n: len(v) for n, v in sorted(grupos.items()) if len(v) > 1},
         "grupos": grupos,
     }
+
+
+@router.post("/kb-stores/prune-empty")
+def prune_empty_kb_stores(display_name: str, aplicar: bool = False):
+    """
+    Elimina los File Search Stores vacíos que compartan un display_name.
+
+    Dry-run por defecto: hay que pasar `aplicar=true` para borrar de verdad.
+    Solo toca stores con cero documentos confirmados, así que no puede
+    llevarse por delante un corpus con contenido.
+    """
+    kb = KnowledgeBaseService()
+    try:
+        return kb.prune_empty_stores(display_name, apply=aplicar)
+    except KnowledgeBaseServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/faq-schema")
