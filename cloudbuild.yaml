@@ -1,0 +1,48 @@
+# CI/CD -- build de la imagen y despliegue a Cloud Run.
+#
+# Triggers de Cloud Build:
+#   trigger-qam-<servicio>   rama qa      -> servicio qam-<servicio>
+#   trigger-prem-<servicio>  rama master  -> servicio prem-<servicio>
+# Cada trigger inyecta las sustituciones _SERVICE_NAME y _REGION.
+#
+# El paso de deploy actualiza SOLO la imagen del servicio. El resto de la
+# configuracion en Cloud Run (variables de entorno, secrets, conector VPC,
+# ingress, politica IAM, escalado y service account) se conserva intacta,
+# porque se administra por fuera de este pipeline.
+
+substitutions:
+  _REGION: us-central1
+  _SERVICE_NAME: ""
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --image=gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --quiet
+
+images:
+  - gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA
