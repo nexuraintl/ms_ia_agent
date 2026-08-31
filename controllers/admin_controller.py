@@ -85,6 +85,36 @@ def prune_empty_kb_stores(display_name: str, aplicar: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/kb-stores/delete")
+def delete_kb_store(name: str, confirmar: bool = False):
+    """
+    Elimina un File Search Store concreto, con su contenido.
+
+    Exige el nombre de recurso exacto (no el display_name), así que no puede
+    borrar en lote por error. Sin `confirmar=true` solo informa qué se borraría
+    y cuántos documentos se perderían. Es irreversible.
+
+    Para limpiar stores vacíos en lote está /kb-stores/prune-empty, que es más
+    seguro porque nunca toca uno con contenido.
+    """
+    kb = KnowledgeBaseService()
+
+    if not confirmar:
+        return {
+            "borrado": False,
+            "name": name,
+            "documentos": kb.count_documents(name),
+            "aviso": "Irreversible. Repetir con confirmar=true para ejecutar.",
+        }
+
+    try:
+        kb.delete_store(name)
+    except KnowledgeBaseServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"borrado": True, "name": name}
+
+
 @router.get("/faq-schema")
 def faq_schema():
     """
