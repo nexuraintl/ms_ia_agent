@@ -42,6 +42,12 @@ class Configuracion(BaseSettings):
     admin_oidc_audience: str | None = Field(None, alias="ADMIN_OIDC_AUDIENCE")
     admin_sync_token: str | None = Field(None, alias="ADMIN_SYNC_TOKEN")
 
+    # Kill switch para la asignación automática de TypeID en Znuny. La gestión
+    # de tipos estuvo deshabilitada meses por problemas previos con la
+    # asignación automática; esta bandera permite apagarla de nuevo sin
+    # redeploy si vuelve a fallar.
+    ticket_type_enabled: bool = Field(True, alias="TICKET_TYPE_ENABLED")
+
 
 @lru_cache()
 def obtener_configuracion() -> Configuracion:

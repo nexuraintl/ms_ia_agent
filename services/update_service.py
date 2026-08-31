@@ -16,6 +16,7 @@ class ZnunyService:
     # 10: Incidente, 14: Requerimiento, 19: Petición. Se validan antes de
     # mandarlos a Znuny: el type_id del diagnóstico lo redacta el modelo.
     TIPOS_VALIDOS = {10, 14, 19}
+    TIPOS_NOMBRES = {10: "Incidente", 14: "Requerimiento", 19: "Petición"}
 
     SYSTEM_PATTERNS = [
         "La solicitud ha sido registrada",
@@ -153,14 +154,28 @@ class ZnunyService:
         if reporte.type_id in self.TIPOS_VALIDOS:
             final_type_id = reporte.type_id
 
+        # Kill switch: la gestión de tipos en Znuny estuvo deshabilitada meses
+        # por problemas previos con la asignación automática. Con la bandera en
+        # false se sigue calculando el tipo (para el texto del diagnóstico),
+        # pero no se manda TypeID a Znuny.
+        settings = obtener_configuracion()
+        type_id_a_enviar = final_type_id if settings.ticket_type_enabled else None
+
         # Aplicar prefijo de emergencia si es necesario
         diagnosis_body = reporte.diagnostico
         if classification.is_critical:
             diagnosis_body = "🚨 [ALERTA CRÍTICA] PROTOCOLO DE EMERGENCIA ACTIVADO\n" + diagnosis_body
 
+        # Siempre se agrega el tipo en texto plano, esté o no habilitado el
+        # envío del TypeID: si la asignación automática está apagada, es la
+        # única señal que le queda a mesa de servicios para asignarlo a mano.
+        tipo_nombre = self.TIPOS_NOMBRES.get(final_type_id, str(final_type_id))
+        diagnosis_body = f"{diagnosis_body}\n\nTipo de ticket: {tipo_nombre}"
+
         logger.info(
-            "Ticket %s: categoría=%s type_id=%s crítico=%s",
-            ticket_id, classification.category, final_type_id, classification.is_critical
+            "Ticket %s: categoría=%s type_id=%s crítico=%s asignación_automática=%s",
+            ticket_id, classification.category, final_type_id, classification.is_critical,
+            settings.ticket_type_enabled
         )
 
         # E. Update Final
@@ -172,7 +187,7 @@ class ZnunyService:
             queue_id=metadata.get("QueueID", 9),
             priority_id=metadata.get("PriorityID", 3),
             state_id=metadata.get("StateID", 1),
-            type_id=final_type_id,
+            type_id=type_id_a_enviar,
             subject="Diagnóstico Automático Nexura IA",
             body=f"[Procesado por: mod_agentes]\n\n{diagnosis_body}"
         )
