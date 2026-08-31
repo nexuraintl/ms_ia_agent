@@ -8,8 +8,16 @@ from typing import Optional, Dict, Any, Union
 # Importamos el modelo de datos para el tipado
 from .agent_service import AgentService, TicketDiagnosisResponse, TicketClassification
 from .knowledge_base_service import KnowledgeBaseService
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_auth_requests
 
 logger = logging.getLogger(__name__)
+
+# Los servicios complementarios (multimodal, monitor de logs) son Cloud Run
+# privados: solo aceptan tráfico interno y exigen un ID token OIDC cuya audience
+# es la URL base del servicio. Se reutiliza un único Request() para el metadata
+# server, igual que en utils/admin_auth.py.
+_oidc_request = google_auth_requests.Request()
 
 class ZnunyService:
     SYSTEM_PATTERNS = [
@@ -205,17 +213,34 @@ class ZnunyService:
             logger.error(f"Error al actualizar ticket en Znuny: {e}")
             return {"status": "error", "message": str(e)}
 
+    def _oidc_headers(self, audience: str) -> Dict[str, str]:
+        """Cabecera Authorization con un ID token OIDC para invocar un Cloud Run
+        privado. `audience` es la URL base del servicio destino (sin path). Si la
+        emisión falla se devuelve vacío y la llamada seguirá su curso: fallará
+        con 401/403 en destino y el motivo queda en el log."""
+        audience = (audience or "").rstrip("/")
+        if not audience:
+            return {}
+        try:
+            token = google_id_token.fetch_id_token(_oidc_request, audience)
+            return {"Authorization": f"Bearer {token}"}
+        except Exception as e:
+            logger.warning("No se pudo obtener ID token para %s: %s", audience, e)
+            return {}
+
     def _call_multimodal_service(self, tid, txt):
         url = os.environ.get("MULTIMODAL_URL")
+        base = (url or "").rstrip("/")
         try:
-            r = requests.post(f"{url}/diagnose", json={"ticket_id": str(tid), "ticket_text": txt}, timeout=120)
+            r = requests.post(f"{base}/diagnose", json={"ticket_id": str(tid), "ticket_text": txt}, headers=self._oidc_headers(base), timeout=120)
             return r.json()
         except: return None
 
     def _notify_log_monitor(self, data):
         url = os.environ.get("LOG_MONITOR_URL")
+        base = (url or "").rstrip("/")
         try:
-            r = requests.post(f"{url}/analyze-incident", json=data, timeout=15)
+            r = requests.post(f"{base}/analyze-incident", json=data, headers=self._oidc_headers(base), timeout=15)
             r.raise_for_status()
             return r.json().get("mensaje_resumen")
         except requests.exceptions.Timeout:
