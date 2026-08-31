@@ -1,11 +1,13 @@
 # Nexura IA: Microservicio mod_agentes
 
-Este microservicio es el núcleo de procesamiento de tickets para la plataforma de soporte de Nexura. Utiliza IA avanzada (Gemini 2.5) para diagnosticar, clasificar y delegar tickets provenientes de Znuny (OTRS) de manera automática y eficiente.
+Este microservicio es el núcleo de procesamiento de tickets para la plataforma de soporte de Nexura. Utiliza IA avanzada (Gemini 3.6 Flash) para diagnosticar, clasificar y delegar tickets provenientes de Znuny (OTRS) de manera automática y eficiente.
 
 ## 🚀 Funcionalidades Principales
 
 ### 1. Diagnóstico Automático con RAG
-El sistema analiza el contenido de los tickets y consulta una **Base de Conocimiento (RAG)** para proporcionar respuestas basadas en experiencias previas y documentación técnica subida a Google Drive.
+El sistema analiza el contenido de los tickets y consulta una **Base de Conocimiento (RAG)** construida a partir del módulo FAQ de Znuny, para proporcionar respuestas basadas en soluciones ya documentadas.
+
+La base se sincroniza desde MariaDB con `POST /admin/sync-faqs`, que reconstruye un File Search Store versionado por timestamp (blue/green) y descarta las versiones antiguas al terminar.
 
 ### 2. Delegación Asíncrona de Incidentes
 Cuando un ticket se clasifica como un **Incidente (TypeID: 10)**:

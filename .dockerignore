@@ -48,6 +48,3 @@ env_vars/
 env_new/
 *.json
 *.env
-
-# Scripts de mantenimiento/sincronización manual
-sync_*.py

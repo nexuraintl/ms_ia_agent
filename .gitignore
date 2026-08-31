@@ -56,7 +56,6 @@ Thumbs.db
 
 # Archivos temporales
 temp_*.txt
-temp_drive_*.txt
 temp_incident_*.txt
 
 # Google Service Account y Secretos

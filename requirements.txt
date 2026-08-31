@@ -10,11 +10,8 @@ python-dotenv==1.2.2
 pydantic==2.13.4
 pydantic-settings==2.14.2
 
-# Google Drive / Sheets (KB de Drive)
-google-api-python-client==2.198.0
+# Verificación de tokens OIDC en /admin/* (utils/admin_auth.py)
 google-auth==2.56.2
-google-auth-httplib2==0.4.0
-google-auth-oauthlib==1.4.0
 
 # Znuny API / servicios externos
 requests==2.34.2

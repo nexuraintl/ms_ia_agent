@@ -253,10 +253,10 @@ class ZnunyService:
 
     def _get_rag_tool_config(self):
         """
-        Resuelve los stores de RAG (Drive + FAQs) y construye el tool_config.
-        No crea nada en el camino caliente del ticket: si un store no existe,
-        simplemente no se incluye. Cacheado con TTL porque este método corre
-        en cada ticket y resolver stores implica listar por red.
+        Resuelve el store de FAQs de Znuny y construye el tool_config.
+        No crea nada en el camino caliente del ticket: si el store no existe,
+        simplemente se continúa sin recuperación. Cacheado con TTL porque este
+        método corre en cada ticket y resolver el store implica listar por red.
         """
         settings = obtener_configuracion()
         if not settings.rag_enabled:
@@ -267,22 +267,15 @@ class ZnunyService:
             return self._cached_tool_config
 
         try:
-            names = []
-            drive_store = self.kb_service.get_store_by_display_name(settings.drive_store_name)
-            if drive_store:
-                names.append(drive_store)
             faq_store = self.kb_service.resolve_active_store(settings.faq_store_prefix)
-            if faq_store:
-                names.append(faq_store)
-
-            if not names:
-                logger.warning("RAG: sin stores resueltos; se continúa sin recuperación")
+            if not faq_store:
+                logger.warning("RAG: no hay store de FAQs; se continúa sin recuperación")
                 self._cached_tool_config = None
                 self._cached_tool_config_ts = now
                 return None
 
-            logger.info("RAG activo con stores: %s", names)
-            tool_config = self.kb_service.get_tool_config(names)
+            logger.info("RAG activo con store de FAQs: %s", faq_store)
+            tool_config = self.kb_service.get_tool_config([faq_store])
             self._cached_tool_config = tool_config
             self._cached_tool_config_ts = now
             return tool_config
@@ -290,7 +283,7 @@ class ZnunyService:
             logger.exception("RAG: fallo construyendo tool config")
             return None
         except Exception:
-            logger.exception("RAG: fallo inesperado resolviendo stores")
+            logger.exception("RAG: fallo inesperado resolviendo el store de FAQs")
             return None
 
     def _build_incident_data(self, tid, meta, diag, type_id, client, txt):

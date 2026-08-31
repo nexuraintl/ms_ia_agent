@@ -35,12 +35,11 @@ def sync_faqs():
 
 @router.get("/rag-status")
 def rag_status():
-    """Qué stores están resueltos ahora mismo para el tool_config del RAG."""
+    """Qué store está resuelto ahora mismo para el tool_config del RAG."""
     settings = obtener_configuracion()
     kb = KnowledgeBaseService()
     return {
         "rag_enabled": settings.rag_enabled,
-        "drive_store": kb.get_store_by_display_name(settings.drive_store_name),
         "faq_store": kb.resolve_active_store(settings.faq_store_prefix),
     }
 

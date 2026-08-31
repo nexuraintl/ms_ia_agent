@@ -1,5 +1,5 @@
 """
-Configuración del pipeline de RAG (Drive + FAQs de Znuny).
+Configuración del pipeline de RAG (FAQs de Znuny).
 Se introduce de forma aditiva: el resto del servicio sigue leyendo
 variables de entorno directamente con os.environ.get.
 """
@@ -15,7 +15,6 @@ class Configuracion(BaseSettings):
 
     # RAG general
     rag_enabled: bool = Field(True, alias="RAG_ENABLED")
-    drive_store_name: str = Field("Znuny_Tickets_KB", alias="DRIVE_STORE_NAME")
     rag_store_cache_ttl_seconds: int = Field(300, alias="RAG_STORE_CACHE_TTL_SECONDS")
 
     # Sync de FAQs (MariaDB -> File Search Store)
