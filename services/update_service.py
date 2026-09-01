@@ -116,6 +116,8 @@ class ZnunyService:
         articles = self._fetch_all_articles(ticket_id, session_id)
         if len(articles) > 2:
             return {"skipped": True, "reason": "Ticket con más de 2 artículos"}
+        if not articles:
+            return {"skipped": True, "reason": "No se pudieron obtener artículos del ticket"}
 
         ticket_text = self._extract_relevant_text(articles)
 
@@ -206,11 +208,21 @@ class ZnunyService:
         url = f"{self.base_url}/Ticket/{ticket_id}?SessionID={session_id}&AllArticles=1"
         try:
             r = requests.get(url, timeout=10)
+            r.raise_for_status()
             data = r.json().get("Ticket")
             return data[0].get("Article", []) if data else []
-        except: return []
+        except Exception:
+            # Antes se tragaba silenciosamente cualquier error (timeout, HTTP
+            # de error, JSON malformado) y devolvía [] indistinguible de un
+            # ticket que de verdad no tiene artículos. Ahora queda logueado
+            # con traceback: sin esto, una falla de Znuny terminaba
+            # apareciendo como un IndexError críptico más abajo.
+            logger.exception("Error obteniendo artículos del ticket %s", ticket_id)
+            return []
 
     def _extract_relevant_text(self, articles):
+        if not articles:
+            return ""
         valid = [a for a in articles if a.get("SenderType") != "system"]
         last = valid[-1] if valid else articles[0]
         return f"Subject: {last.get('Subject')}\nBody: {last.get('Body')}"

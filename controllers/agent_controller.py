@@ -69,8 +69,11 @@ async def process_ticket_full_cycle(ticket_id: int, payload: dict):
         else:
             logger.info(f"✅ Ciclo completado para Ticket {ticket_id}")
 
-    except Exception as e:
-        logger.error(f"❌ Error crítico en process_ticket_full_cycle para #{ticket_id}: {e}")
+    except Exception:
+        # logger.exception conserva el traceback; con logger.error(f"...{e}")
+        # solo queda el mensaje, que para excepciones tipo IndexError o KeyError
+        # no dice desde qué línea vino.
+        logger.exception("❌ Error crítico en process_ticket_full_cycle para #%s", ticket_id)
 
 def save_request_log(method: str, payload: dict):
     """Guarda el log en disco sin afectar la respuesta al cliente."""
