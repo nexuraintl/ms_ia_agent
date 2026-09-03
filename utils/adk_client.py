@@ -104,7 +104,7 @@ class ADKClient:
         Contexto e Insumos:
         {context}
 
-        Instrucciones:
+        Instrucciones de contenido:
         - Si hubo un Protocolo de Emergencia, inicia con "[ALERTA CRÍTICA]".
         - Prioriza la solución documentada en el corpus de recuperación (File Search) si aplica
           al caso; cita el número de FAQ (f_number) en "faq_referencia" cuando la uses.
@@ -112,12 +112,32 @@ class ADKClient:
           diagnóstico en vez de inventar pasos de solución.
         - No menciones nombres de microservicios internos, habla como soporte técnico.
         - Si hay insumos de especialistas, intégralos de forma natural.
-        - Sé profesional y técnico.
+        - Sé profesional y técnico, pero conciso.
+
+        Formato del campo "diagnostico" (texto plano; se muestra tal cual al agente de mesa):
+        - Estructúralo en estas secciones, cada título en su propia línea y una línea en
+          blanco entre secciones:
+
+          Resumen:
+          <2 a 3 líneas describiendo la falla>
+
+          Causa probable:
+          <1 a 2 líneas>
+
+          Acciones recomendadas:
+          1. <acción concreta>
+          2. <acción concreta>
+          3. <acción concreta>
+
+          Referencia: <f_number de la FAQ usada, o "sin FAQ aplicable en el corpus">
+        - Escribe los saltos de línea como \\n dentro del string JSON.
+        - No uses Markdown: nada de **negrita**, encabezados con # ni viñetas con guion.
+          Solo texto plano, numeración "1." para la lista y saltos de línea.
 
         Responde en JSON, sin texto adicional antes o después:
         {{
             "type_id": int,
-            "diagnostico": "Resumen profesional para el agente de primer nivel",
+            "diagnostico": "Resumen:\\n...\\n\\nCausa probable:\\n...\\n\\nAcciones recomendadas:\\n1. ...\\n2. ...\\n\\nReferencia: ...",
             "faq_referencia": "f_number de la FAQ citada, o null si no se usó ninguna"
         }}
         """

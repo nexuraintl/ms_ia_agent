@@ -77,9 +77,11 @@ class AgentService:
         """
         
         response_text = self.adk_client.generate_final_diagnosis(contexto_final, tool_config)
-        
+
         try:
-            data = json.loads(extract_json(response_text))
+            # strict=False: el diagnóstico lleva saltos de línea reales dentro
+            # del string y sin esto json.loads los rechaza como control chars.
+            data = json.loads(extract_json(response_text), strict=False)
             return TicketDiagnosisResponse(
                 type_id=data.get("type_id"),
                 diagnostico=data.get("diagnostico") or data.get("diagnosis"),
