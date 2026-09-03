@@ -293,11 +293,13 @@ class ZnunyService:
         url = os.environ.get("LOG_MONITOR_URL")
         base = (url or "").rstrip("/")
         try:
-            r = requests.post(f"{base}/analyze-incident", json=data, headers=self._oidc_headers(base), timeout=15)
+            # El endpoint hace SSH + grep remoto + uno o varios diagnósticos
+            # Gemini; 15s se quedaba corto y el resultado se descartaba.
+            r = requests.post(f"{base}/analyze-incident", json=data, headers=self._oidc_headers(base), timeout=45)
             r.raise_for_status()
             return r.json().get("mensaje_resumen")
         except requests.exceptions.Timeout:
-            logger.warning("⏳ El monitor de logs superó los 15s (anormal según métricas).")
+            logger.warning("⏳ El monitor de logs superó los 45s; se omite el insumo de logs.")
             return "Análisis de logs omitido por latencia."
         except Exception as e:
             logger.error(f"❌ Error en Monitor de Logs: {e}")
