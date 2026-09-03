@@ -128,6 +128,7 @@ class ZnunyService:
         classification: TicketClassification = self.agent_service.classify_and_route(ticket_text, tool_config)
         
         insumos_especialistas = ""
+        logs_consultados = []  # líneas crudas de log para adjuntar como soporte
         final_type_id = classification.type_id
 
         # C. Lógica de Servicios Externos (Multimodal / Logs)
@@ -149,9 +150,14 @@ class ZnunyService:
             incident_payload = self._build_incident_data(
                 ticket_id, metadata, "Análisis en curso", final_type_id, client_info, ticket_text
             )
-            log_summary = self._notify_log_monitor(incident_payload)
-            if log_summary:
-                insumos_especialistas += f"\n[INSUMO TÉCNICO LOGS]: {log_summary}"
+            log_result = self._notify_log_monitor(incident_payload)
+            if isinstance(log_result, dict):
+                resumen_logs = log_result.get("mensaje_resumen")
+                if resumen_logs:
+                    insumos_especialistas += f"\n[INSUMO TÉCNICO LOGS]: {resumen_logs}"
+                logs_consultados = log_result.get("logs_consultados") or []
+            elif log_result:  # compatibilidad si el monitor devuelve un string
+                insumos_especialistas += f"\n[INSUMO TÉCNICO LOGS]: {log_result}"
 
         # D. GENERACIÓN DE REPORTE FINAL (UNIFICACIÓN CON RAG)
         reporte: TicketDiagnosisResponse = self.agent_service.generate_final_report(
@@ -181,6 +187,15 @@ class ZnunyService:
         # única señal que le queda a mesa de servicios para asignarlo a mano.
         tipo_nombre = self.TIPOS_NOMBRES.get(final_type_id, str(final_type_id))
         diagnosis_body = f"{diagnosis_body}\n\nTipo de ticket: {tipo_nombre}"
+
+        # Se anexa DESPUÉS del reporte del LLM para que las líneas queden
+        # verbatim, como evidencia del log que respaldó el diagnóstico.
+        if logs_consultados:
+            evidencia = "\n".join(f"- {linea}" for linea in logs_consultados)
+            diagnosis_body = (
+                f"{diagnosis_body}\n\n"
+                f"---\nLog(s) consultado(s) como soporte:\n{evidencia}"
+            )
 
         logger.info(
             "Ticket %s: categoría=%s type_id=%s crítico=%s asignación_automática=%s",
@@ -297,10 +312,12 @@ class ZnunyService:
             # Gemini; 15s se quedaba corto y el resultado se descartaba.
             r = requests.post(f"{base}/analyze-incident", json=data, headers=self._oidc_headers(base), timeout=45)
             r.raise_for_status()
-            return r.json().get("mensaje_resumen")
+            # Devolvemos el JSON completo: además del resumen trae
+            # `logs_consultados` (líneas crudas) que se adjuntan al ticket.
+            return r.json()
         except requests.exceptions.Timeout:
             logger.warning("⏳ El monitor de logs superó los 45s; se omite el insumo de logs.")
-            return "Análisis de logs omitido por latencia."
+            return {"mensaje_resumen": "Análisis de logs omitido por latencia.", "logs_consultados": []}
         except Exception as e:
             logger.error(f"❌ Error en Monitor de Logs: {e}")
             return None
